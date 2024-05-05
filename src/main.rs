@@ -169,24 +169,27 @@ fn main() -> ! {
     let mut rx_buffer = [0u8; RX_BUFFER_SIZE];
     let mut tx_buffer = [0u8; TX_BUFFER_SIZE];
     let mut socket = wifi_stack.get_socket(&mut rx_buffer, &mut tx_buffer);
-
+    println!("got socket");
    let io = IO::new(peripherals.GPIO, peripherals.IO_MUX);
     let mut led = io.pins.gpio21.into_push_pull_output();
 
-    led.set_low();
-    delay.delay(500.millis());
     led.set_high();
-    delay.delay(500.millis());
-    led.set_low();
-    delay.delay(500.millis());
-    led.set_high();
-    delay.delay(500.millis());
-    led.set_low();
+    // delay.delay(500.millis());
+    // led.set_high();
+    // delay.delay(500.millis());
+    // led.set_low();
+    // delay.delay(500.millis());
+    // led.set_high();
+    // delay.delay(500.millis());
+    // led.set_low();
 
 
+    println!("start work socket");
     socket.work();
+    println!("socket worked");
 
     loop {
+    println!("listening");
 
         socket.listen(8080).unwrap();
         delay.delay(500.millis());
@@ -200,7 +203,9 @@ fn main() -> ! {
                 Err(_) => "yeah it's fuck"
             }
         );
-        // led.toggle();
+        led.toggle();
+        delay.delay(300.millis());
+        led.toggle();
         socket
             .write(w.as_bytes())
             .unwrap();
