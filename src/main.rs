@@ -171,9 +171,11 @@ fn main() -> ! {
     let mut socket = wifi_stack.get_socket(&mut rx_buffer, &mut tx_buffer);
     println!("got socket");
    let io = IO::new(peripherals.GPIO, peripherals.IO_MUX);
-    let mut led = io.pins.gpio21.into_push_pull_output();
+    let mut pwr_switch = io.pins.gpio21.into_push_pull_output();
+    let mut led2 = io.pins.gpio4.into_push_pull_output();
 
-    led.set_high();
+    pwr_switch.set_high();
+    led2.set_high();
     // delay.delay(500.millis());
     // led.set_high();
     // delay.delay(500.millis());
@@ -188,6 +190,7 @@ fn main() -> ! {
     socket.work();
     println!("socket worked");
 
+    let mut buffer = [0u8; 2048];
     loop {
     println!("listening");
 
@@ -196,16 +199,16 @@ fn main() -> ! {
         socket.work();
         let wait_end = current_millis() + 20 * 1000;
         
-        let mut buffer = [0u8; 2048];
         let w = handle_request(
+            // ideally we'd read right off the instream to handle but this works for now
             match socket.read(&mut buffer) {
-                Ok(len) => unsafe { core::str::from_utf8_unchecked(&buffer[..len]) },
-                Err(_) => "yeah it's fuck"
+                Ok(len) => &buffer[..len],
+                Err(_) => b"yeah it's fuck"
             }
         );
-        led.toggle();
+        pwr_switch.toggle();
         delay.delay(300.millis());
-        led.toggle();
+        pwr_switch.toggle();
         socket
             .write(w.as_bytes())
             .unwrap();
@@ -218,12 +221,22 @@ fn main() -> ! {
 
         socket.close(); socket.disconnect(); socket.work();
 
+        buffer = [0u8; 2048];
     }
 
         
 }
 
-fn handle_request(req: &str) -> String {
+fn handle_request(req: &[u8]) -> String {
+
+    let mut buff_str: String = String::from("");
+    core::str::from_utf8(req).unwrap().lines()
+        .for_each(|l| println!("{}", l));
+
+    match req {
+        _ => println!("unhandled\n{:?}", req)
+    };    
+
 
     let write_out = "<html>\
         <body>\
