@@ -9,7 +9,7 @@ use esp_wifi::wifi::{ClientConfiguration, Configuration};
 
 // use core::mem::MaybeUninit;
 use alloc::{
-    // vec,
+    vec::Vec,
     format};
 // use alloc::vec::Vec;
 use alloc::string::String;
@@ -23,8 +23,16 @@ use esp_wifi::{
     current_millis,
     EspWifiInitFor,
 };
+use esp_hal::ledc::{
+    LEDC,
+    channel,
+    timer::HSClockSource,
+    timer,
+    HighSpeed,
+    channel::config::PinConfig,
+};
 // use crate::alloc::string::ToString;
-
+use embedded_hal::pwm;
 use esp_hal::{
     clock::ClockControl,
     rng::Rng,
@@ -76,11 +84,30 @@ fn main() -> ! {
     #[cfg(feature = "log")]
     esp_println::logger::init_logger(log::LevelFilter::Info);
 
+
     let peripherals = Peripherals::take();
+
+
+
+ 
 
 
     let system = peripherals.SYSTEM.split();
     let clocks = ClockControl::max(system.clock_control).freeze();
+
+
+        let ledc = LEDC::new(peripherals.LEDC, &clocks);
+
+    let mut hstimer0 = ledc.get_timer::<HighSpeed>(timer::Number::Timer0);
+    hstimer0
+      .configure(timer::config::Config {
+          duty: timer::config::Duty::Duty5Bit,
+          clock_source: HSClockSource::APBClk,
+          frequency: 24.kHz(),
+      })
+      .unwrap();
+
+
 
     let delay = Delay::new(&clocks);
     init_heap();
@@ -172,10 +199,22 @@ fn main() -> ! {
     println!("got socket");
    let io = IO::new(peripherals.GPIO, peripherals.IO_MUX);
     let mut pwr_switch = io.pins.gpio21.into_push_pull_output();
-    let mut led2 = io.pins.gpio4.into_push_pull_output();
+    let mut led = io.pins.gpio4.into_push_pull_output();
+
+
+      let mut channel0 = ledc.get_channel(channel::Number::Channel0, led);
+  channel0
+      .configure(channel::config::Config {
+          timer: &hstimer0,
+          duty_pct: 10,
+          pin_config: PinConfig::PushPull,
+
+      })
+      .unwrap();
 
     pwr_switch.set_high();
-    led2.set_high();
+    // led2.set_high();
+    // led2.set_duty_cycle_percent(80u8);
     // delay.delay(500.millis());
     // led.set_high();
     // delay.delay(500.millis());
@@ -227,11 +266,27 @@ fn main() -> ! {
         
 }
 
+// struct Request
+
 fn handle_request(req: &[u8]) -> String {
 
     let mut buff_str: String = String::from("");
-    core::str::from_utf8(req).unwrap().lines()
-        .for_each(|l| println!("{}", l));
+    core::str::from_utf8(req)
+        .unwrap()
+        .chars()
+        .for_each(|c| {
+            match c {
+                '\r' | ' ' => {println!("{:?}", buff_str); buff_str.clear();},
+                '\n' => (),
+                _ => buff_str.push(c)
+            }
+        });
+    
+    // match  header {
+    //     ["GET", ..] => println!("gets {:?}", header),
+    //     _ => println!("not gets");
+    // }
+
 
     match req {
         _ => println!("unhandled\n{:?}", req)
