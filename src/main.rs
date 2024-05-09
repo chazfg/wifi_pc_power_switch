@@ -3,7 +3,7 @@
 
 use embedded_io::*;
 use esp_wifi::wifi::{ClientConfiguration, Configuration};
-
+use serde::Deserialize;
 
 // extern crate alloc;
 
@@ -44,9 +44,11 @@ use esp_hal::{
     timer::TimerGroup,
     peripherals::Peripherals,
 };
+use core::str::FromStr;
 
 // use smoltcp::wire::IpAddress;
 use smoltcp::iface::SocketStorage;
+use httparse;
 
 const SSID: &str = env!("SSID");
 const PASSWORD: &str = env!("PASSWORD");
@@ -65,7 +67,6 @@ const TX_BUFFER_SIZE: usize = 16384;
 
 extern crate alloc;
 use core::mem::MaybeUninit;
-
 
 #[global_allocator]
 static ALLOCATOR: esp_alloc::EspHeap = esp_alloc::EspHeap::empty();
@@ -86,12 +87,6 @@ fn main() -> ! {
 
 
     let peripherals = Peripherals::take();
-
-
-
- 
-
-
     let system = peripherals.SYSTEM.split();
     let clocks = ClockControl::max(system.clock_control).freeze();
 
@@ -213,17 +208,6 @@ fn main() -> ! {
       .unwrap();
 
     pwr_switch.set_high();
-    // led2.set_high();
-    // led2.set_duty_cycle_percent(80u8);
-    // delay.delay(500.millis());
-    // led.set_high();
-    // delay.delay(500.millis());
-    // led.set_low();
-    // delay.delay(500.millis());
-    // led.set_high();
-    // delay.delay(500.millis());
-    // led.set_low();
-
 
     println!("start work socket");
     socket.work();
@@ -238,7 +222,7 @@ fn main() -> ! {
         socket.work();
         let wait_end = current_millis() + 20 * 1000;
         
-        let w = handle_request(
+        let w = parse_request(
             // ideally we'd read right off the instream to handle but this works for now
             match socket.read(&mut buffer) {
                 Ok(len) => &buffer[..len],
@@ -266,26 +250,23 @@ fn main() -> ! {
         
 }
 
-// struct Request
+// struct Request {
+    // method: 
+    // endpoint:
+    // protocol:
+    // headers:
+    // content:
+// }
 
-fn handle_request(req: &[u8]) -> String {
+fn parse_request(req: &[u8]) -> String {
 
-    let mut buff_str: String = String::from("");
-    core::str::from_utf8(req)
-        .unwrap()
-        .chars()
-        .for_each(|c| {
-            match c {
-                '\r' | ' ' => {println!("{:?}", buff_str); buff_str.clear();},
-                '\n' => (),
-                _ => buff_str.push(c)
-            }
-        });
-    
-    // match  header {
-    //     ["GET", ..] => println!("gets {:?}", header),
-    //     _ => println!("not gets");
-    // }
+    let mut headers = [httparse::EMPTY_HEADER; 16];
+    let mut req_parse = httparse::Request::new(&mut headers);
+    match req_parse.parse(req) {
+        Ok(httparse::Status::Complete(offset)) => println!("{}", match_request_method(req_parse, offset, req)),
+        Ok(httparse::Status::Partial) => println!("got partial"),
+        Err(_) => println!("ouch")
+    };
 
 
     match req {
@@ -308,4 +289,65 @@ fn handle_request(req: &[u8]) -> String {
         ", write_out.len(), write_out)
 
 }
+
+
+fn match_request_method(parsed_request: httparse::Request, offset: usize, req: &[u8]) -> String {
+    match parsed_request.method {
+        Some("GET") => handle_get_request(parsed_request).response,
+        Some("POST") => handle_post_request(parsed_request, offset, req),
+        _ => String::from("dinnae get that")
+    }
+}
+
+fn handle_get_request(get_request: httparse::Request) -> ParsingResult {
+    let r = match get_request.path {
+        Some("/kep") => String::from("is kep"),
+        _ => String::from("is noo kep")
+    };
+
+    ParsingResult::new(r, None)
+}
+
+
+fn handle_post_request(post_request: httparse::Request, offset: usize, req: &[u8]) -> String {
+    println!("{:?}", post_request);
+    // println!("{:?}", core::str::from_utf8(&req[offset..]));
+
+    match post_request.path {
+        Some("/ring_light") => handle_ring_light(&req[offset..]),
+        _ => String::from("is noo kep")
+    }
+}
+
+struct ParsingResult {
+    response: String,
+    action: Option<Action>
+}
+
+#[derive(Deserialize, Debug)]
+#[serde(tag = "action")]
+enum Action {
+    #[serde(rename="set_duty_cycle")]
+    SetDutyCycle {value: i32}
+}
+
+impl ParsingResult {
+    fn new(response: String, action: Option<Action>) -> Self {
+        Self { response, action }
+    }
+}
+
+
+
+fn handle_ring_light(request_content: &[u8]) -> String {
+    let found_action: Action = serde_json::from_slice(request_content).expect("should deserial");
+    
+    println!("{:?}", found_action);
+
+
+    String::from("lkajdsf")
+}
+
+
+
 

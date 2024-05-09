@@ -39,6 +39,9 @@ smoltcp = { version = "0.11.0", default-features = false, features = [
 ] }
 critical-section = "1.1.2"
 embedded-hal = "1.0.0"
+httparse = { version = "1.8.0", default-features = false }
+serde = { version = "1.0.201", default-features = false, features = ["derive", "alloc"] }
+serde_json = { version = "1.0.117", default-features = false, features = ["alloc"] }
 [profile.dev]
 # Rust debug is too slow. 
 # For debug builds always builds with some optimization
