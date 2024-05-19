@@ -1,10 +1,12 @@
 #![no_std]
 #![no_main]
 pub mod request_handler;
-mod action_handler;
+pub mod write_resp_utils;
+pub mod action_handler;
 
 use request_handler::{ParsingResult, ParsingError, parse_request};
-use action_handler::dispatch_action;
+use write_resp_utils::{write_200, write_400};
+use action_handler::{dispatch_action, handle_action};
 
 use esp_hal::{
     clock::ClockControl,
@@ -16,8 +18,6 @@ use esp_hal::{
     timer::TimerGroup,
     peripherals::Peripherals,
 };
-
-// use alloc;
 
 use esp_println::println;
 use embedded_io::*;
@@ -33,15 +33,6 @@ use esp_wifi::{
     wifi_interface::WifiStack,
     current_millis,
 };
-// use esp_hal::ledc::{
-//     LEDC,
-//     channel,
-//     timer::HSClockSource,
-//     timer,
-//     HighSpeed,
-//     channel::config::PinConfig,
-// };
-
 use core::str::FromStr;
 
 use smoltcp::iface::SocketStorage;
@@ -116,11 +107,6 @@ fn main() -> ! {
 
     println!("Start Wifi Scan");
     let res: Result<(heapless::Vec<AccessPointInfo, 10>, usize), WifiError> = controller.scan_n();
-    // if let Ok((res, _count)) = res {
-    //     for ap in res {
-    //         println!("{:?}", ap);
-    //     }
-    // }
 
     println!("{:?}", controller.get_capabilities());
     println!("wifi_connect {:?}", controller.connect());
@@ -195,10 +181,7 @@ fn main() -> ! {
 
         let response_to_send = match w {
 
-            Ok(ParsingResult {response: res, action: Some(action)}) => {
-                dispatch_action(action, &mut app_io);
-                write_200(String::from("some(action)"))
-            },
+            Ok(ParsingResult {response: res, action: Some(action)}) => handle_action(action, &mut app_io),
             Ok(resulting_action) => write_200(resulting_action.response),
             Err(error_parsed) => write_400(error_parsed)
 
@@ -224,35 +207,6 @@ fn main() -> ! {
         
 }
 
-
-// TODO make this take in a reference to a socket and perform the writing in the function
-fn write_200(response: String) -> String {
-    
-    format!(
-        "HTTP/1.0 200 OK\r\n\
-        Content-Type: text/html\r\n\
-        Content-Length: {}\r\n\
-        \r\n\
-        {}\r\n\
-        ", response.len(), response)
-
-
-}
-
-fn write_400(error_parsed: ParsingError) -> String {
-
-    // TODO: specify code/message based on error parsed
-    String::from(
-        "HTTP/1.0 400 Bad Request\r\n\
-        Content-Type: application/problem+json\r\n\
-        \r\n\
-        {\r\n\
-            \"title\": \"Error while handling request\",\r\n\
-            \"status\": 400,\r\n\
-        }\r\n\
-        ")
-
-}
 
 pub struct ApplicationIo {
 
