@@ -1,17 +1,22 @@
 #![no_std]
 #![no_main]
-mod request_handler;
-use request_handler::parse_request;
+pub mod request_handler;
+mod action_handler;
+
+use request_handler::{ParsingResult, ParsingError, parse_request};
+use action_handler::dispatch_action;
+
 use esp_hal::{
     clock::ClockControl,
     rng::Rng,
     prelude::*,
     // efuse::Efuse,
     delay::Delay,
-    gpio::IO,
+    gpio::{IO, Output, GpioPin},
     timer::TimerGroup,
     peripherals::Peripherals,
 };
+
 // use alloc;
 
 use esp_println::println;
@@ -19,6 +24,7 @@ use embedded_io::*;
 use esp_wifi::wifi::{ClientConfiguration, Configuration};
 use serde::Deserialize;
 use alloc::string::String;
+use alloc::format;
 use esp_backtrace as _;
 
 use esp_wifi::{
@@ -70,14 +76,9 @@ fn main() -> ! {
     let system = peripherals.SYSTEM.split();
     let clocks = ClockControl::max(system.clock_control).freeze();
 
-
     init_heap();
 
-
-
     let delay = Delay::new(&clocks);
-
-
 
     // #[cfg(target_arch = "xtensa")]
     let timer = TimerGroup::new(peripherals.TIMG1, &clocks, None).timer0;
@@ -92,22 +93,6 @@ fn main() -> ! {
     )
     .unwrap();
     let wifi = peripherals.WIFI;
-    // esp_println::logger::init_logger(log::LevelFilter::Info);
-
-
-
-
-    // let ledc = LEDC::new(peripherals.LEDC, &clocks);
-
-    // let mut hstimer0 = ledc.get_timer::<HighSpeed>(timer::Number::Timer0);
-    // hstimer0
-      // .configure(timer::config::Config {
-          // duty: timer::config::Duty::Duty5Bit,
-          // clock_source: HSClockSource::APBClk,
-          // frequency: 12.kHz(),
-      // })
-      // .unwrap();
-
 
     let mut socket_set_entries: [SocketStorage; 3] = Default::default();
     let (iface, device, mut controller, sockets) =
@@ -125,23 +110,22 @@ fn main() -> ! {
     println!("wifi_set_configuration returned {:?}", res);
 
     delay.delay(500.millis());
-   controller.start().unwrap();
-   println!("is wifi started: {:?}", controller.is_started());
+    controller.start().unwrap();
+    println!("is wifi started: {:?}", controller.is_started());
 
 
     println!("Start Wifi Scan");
     let res: Result<(heapless::Vec<AccessPointInfo, 10>, usize), WifiError> = controller.scan_n();
-    if let Ok((res, _count)) = res {
-        for ap in res {
-            println!("{:?}", ap);
-        }
-    }
+    // if let Ok((res, _count)) = res {
+    //     for ap in res {
+    //         println!("{:?}", ap);
+    //     }
+    // }
 
     println!("{:?}", controller.get_capabilities());
     println!("wifi_connect {:?}", controller.connect());
-
-    // wait to get connected
     println!("Wait to get connected");
+
     loop {
         let res = controller.is_connected();
         match res {
@@ -156,14 +140,12 @@ fn main() -> ! {
             }
         }
     }
-    println!("{:?}", controller.is_connected());
 
-    // wait for getting an ip address
+    println!("{:?}", controller.is_connected());    // wait for getting an ip address
+    
     println!("Wait to get an ip address");
-    // let mut counter = 0u16;
 
     println!("iface config {:?}", wifi_stack.get_iface_configuration());
-    // println!("{:?}", wifi_stack.sockets);
 
     loop {
         wifi_stack.work();
@@ -172,12 +154,6 @@ fn main() -> ! {
             println!("got ip {:?}", wifi_stack.get_ip_info());
             break;
         }
-wifi_stack.is_iface_up();
-        // wifi_stack.reset();
-        wifi_stack.work();
-        // println!("try ip {:?}", wifi_stack.get_ip_info());
-        wifi_stack.work();
-        // counter += 1;
     }
     println!("creating buffer");
 
@@ -185,40 +161,8 @@ wifi_stack.is_iface_up();
     let mut tx_buffer = [0u8; TX_BUFFER_SIZE];
     let mut socket = wifi_stack.get_socket(&mut rx_buffer, &mut tx_buffer);
     println!("got socket");
-   let io = IO::new(peripherals.GPIO, peripherals.IO_MUX);
+    let io = IO::new(peripherals.GPIO, peripherals.IO_MUX);
     let mut pwr_switch = io.pins.gpio21.into_push_pull_output();
-    // let mut led = io.pins.gpio4.into_open_drain_output();
-
-
-    //   let mut channel0 = ledc.get_channel(channel::Number::Channel0, led);
-    //   channel0
-    //   .configure(channel::config::Config {
-    //       timer: &hstimer0,
-    //       duty_pct: 90,
-    //       pin_config: PinConfig::OpenDrain,
-
-    //   })
-    //   .unwrap();
-    // // let mut channel1 = ledc.get_channel(channel::Number::Channel1, led);
-    //   channel1
-    //   .configure(channel::config::Config {
-    //       timer: &hstimer0,
-    //       duty_pct: 90,
-    //       pin_config: PinConfig::PushPull,
-
-    //   })
-    //   .unwrap();
-
-    // let mut channel2 = ledc.get_channel(channel::Number::Channel2, led);
-    //   channel2
-    //   .configure(channel::config::Config {
-    //       timer: &hstimer0,
-    //       duty_pct: 90,
-    //       pin_config: PinConfig::PushPull,
-
-    //   })
-    //   .unwrap();
-
     pwr_switch.set_high();
 
     println!("start work socket");
@@ -226,26 +170,44 @@ wifi_stack.is_iface_up();
     println!("socket worked");
 
     let mut buffer = [0u8; 2048];
+
+    let mut app_io = ApplicationIo {
+        power_switch: pwr_switch,
+        delay: delay
+    };
+
     loop {
     println!("listening");
 
         socket.listen(8080).unwrap();
-        delay.delay(500.millis());
+        app_io.delay.delay(500.millis());
         socket.work();
         let wait_end = current_millis() + 20 * 1000;
         
-        let w = parse_request(
+        // TODO make this result 
+        let w: Result<ParsingResult, ParsingError> = parse_request(
             // ideally we'd read right off the instream to handle but this works for now
             match socket.read(&mut buffer) {
                 Ok(len) => &buffer[..len],
                 Err(_) => b"yeah it's fuck"
             }
         );
-        pwr_switch.toggle();
-        delay.delay(300.millis());
-        pwr_switch.toggle();
+
+        let response_to_send = match w {
+
+            Ok(ParsingResult {response: res, action: Some(action)}) => {
+                dispatch_action(action, &mut app_io);
+                write_200(String::from("some(action)"))
+            },
+            Ok(resulting_action) => write_200(resulting_action.response),
+            Err(error_parsed) => write_400(error_parsed)
+
+        };
+
+        // println!("{:?}", w);
+
         socket
-            .write(w.as_bytes())
+            .write(response_to_send.as_bytes())
             .unwrap();
 
         socket.flush().unwrap();
@@ -262,16 +224,39 @@ wifi_stack.is_iface_up();
         
 }
 
-// struct Request {
-    // method: 
-    // endpoint:
-    // protocol:
-    // headers:
-    // content:
-// }
+
+// TODO make this take in a reference to a socket and perform the writing in the function
+fn write_200(response: String) -> String {
+    
+    format!(
+        "HTTP/1.0 200 OK\r\n\
+        Content-Type: text/html\r\n\
+        Content-Length: {}\r\n\
+        \r\n\
+        {}\r\n\
+        ", response.len(), response)
 
 
+}
 
+fn write_400(error_parsed: ParsingError) -> String {
 
+    // TODO: specify code/message based on error parsed
+    String::from(
+        "HTTP/1.0 400 Bad Request\r\n\
+        Content-Type: application/problem+json\r\n\
+        \r\n\
+        {\r\n\
+            \"title\": \"Error while handling request\",\r\n\
+            \"status\": 400,\r\n\
+        }\r\n\
+        ")
 
+}
 
+pub struct ApplicationIo {
+
+    pub power_switch: GpioPin<Output<esp_hal::gpio::PushPull>, 21>,
+    pub delay: Delay
+
+}
